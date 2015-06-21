@@ -1,0 +1,176 @@
+---
+title: "Predicting activity using fitness tracker data"
+author: "Streckereck"
+date: "Tuesday, June 16, 2015"
+output: html_document
+---
+
+**Introduction**
+The purpose of this analysis is to predict the manner (quality) of physical activity using
+data collected using personal fitness tracker devises such as Jawbone Up, 
+Nike FuelBand, and Fitbit. The goal is to predict the quality an excersize based on
+accelerometer measurments. This type of prediction could be useful for monitoring
+physical performance and providing feedback for physical activies and exersize.
+
+**Instructions**
+You should create a report describing how you built your model, how you used cross 
+validation, what you think the expected out of sample error is, and why you made 
+the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+**Methods**
+
+1 The data were downloaded.
+2 The data were summarized and plotted to explore different relationships and strategies 
+for analyses.
+3 Machine learning algorithms were applied to the training data and compared based
+on accuracy of classification and other practical considerations
+    * The data were split 60 / 40% training and testing to cross validate the model
+    * The test data were used only once on the final model
+4 The highest performing machine learning approach was tested using the test cases
+
+
+***1) Download and clean the data***
+```{r}
+library (caret)
+# dl data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              "C:/Users/cferster/Dropbox/practicalMachineLearning/pml.csv")
+pml <- read.csv("C:/Users/cferster/Dropbox/practicalMachineLearning/pml.csv")
+
+pml$classe <- as.factor(pml$classe)
+
+# 60 / 40% split for training and validation
+set.seed(1224)
+train <- createDataPartition(y=pml$classe,
+                                         p = 0.6,
+                                         list=F)
+
+training <- pml[train,]
+testing <- pml[-train,]
+
+
+#test cases
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              "C:/Users/cferster/Dropbox/practicalMachineLearning/pml-testcases.csv")
+pml_testcases <- read.csv("C:/Users/cferster/Dropbox/practicalMachineLearning/pml-testcases.csv")
+
+
+
+```
+
+***2) Summarize and plot the data***
+
+```{r}
+
+# first check for zero variance
+nzv <- nearZeroVar(training, saveMetrics=T) # check for zero variance
+
+# many of the variables have zero variance, and these can be safely ignored
+nzvVar <- which(nzv$nzv == T)
+
+pml_training_vars <- training[,-nzvVar]
+
+# some of the columns have a lot of NA's... let's look at those:
+NAs <- apply(pml_training_vars, 2, function(column){
+        sum(is.na(column))
+})
+        
+# These can be removed
+pml_training_vars<- pml_training_vars[,which(as.integer(NAs)==0)]
+
+# look at the highly correlated variables
+
+qualVars <- c(1:6,59) # metadata variables, not used in analysis
+M <- abs(cor(pml_training_vars[,-qualVars]))
+diag(M)<-0
+highlyCorrelated <- which(M>0.75, arr.ind=T)
+
+# there are a lot of multicollinear variables here. One approach might be to perform
+# a principal components analysis as a variable reduction pre-processing step, 
+# if the anlalysis is sensative to colinearity 
+
+# there are too many variables to visualize using a pairs plot, and these might
+# miss relationships that occur with three or more variables.
+# instead, we can use PCA as a way to display multiple dimensions in an optimized
+# way in a reduced set of dimensions (just to get an idea what is going on in the data)
+# for example, we can display a bi-plot with the correlations between the variables
+# and the factor loadings in the PCA (Venerables and Ripley p. 335, Husson and Pages)
+
+library(FactoMineR)
+pca <- pml_training_vars[,c(59,7:58)]
+response <- c(2:53)
+res.pca<-PCA(pca, response, quali.sup=1, graph = F)
+plot(res.pca, axes=c(1:2), choix="var")
+plot(res.pca, axes=c(3:4), choix="var")
+dimdesc(res.pca)
+
+plot(res.pca, axes=c(1:2), choix="ind", habillage=1)
+plot(res.pca, axes=c(3:4), choix="ind", habillage=1)
+
+# record 5373 looks like a huge outlier
+# This record could be investigated for measurement error or other unusual circumstances
+# without more knowledge of the data, it is hard to say whether it is valid or not
+# Since there is so much data volume, it will be removed
+training <- training[-5373,]
+
+
+
+# one of the ways of seperating the different activities looks like it is the
+# group of variables related to the belt (top left)
+# there is hope that this classification will work!
+
+
+```
+
+***3) Test differnt machine learning algoriths and assess by accuracy***
+
+```{r}
+
+# two possible approaches: 
+
+# Stepwise linear disciminant anlysis (slda)
+pml_training_vars <- pml_training_vars[,c(59,7:58)]
+
+slda <- train(classe ~ ., 
+             method = "stepLDA", # stepwise linear discriminant analysis
+             data = pml_training_vars,
+             preProc = c("center", "scale"))#,
+             
+
+#model diagnostics
+print(slda)
+# 97 % training accuracy and 97% kappa is pretty reasonable
+vars <- varImp(slda)
+plot(vars[1])
+# the plot is interesting because we could look at which variables are important
+# for each type of activity
+
+# let's see what a random forest can do
+rf <- train(classe ~ ., 
+             method = "rf", # random forest
+             trControl = trainControl(method = "oob"),
+             data = pml_training_vars)
+print(rf)
+plot(varImp(rf))
+
+# similar to the interpretation of the principal components, the roll belt seems
+# to be the most important variable
+
+# 98 % accuracy and 0.98 kappa... very very good
+
+#random forest had a higher accuracy and kappa coefficient
+# it will be used for the final model
+# now test with the test dataset:
+
+C1 <- confusionMatrix(pml_testing$classe, predict(rf, pml_testing))
+print(C1)
+
+# 99 % accuracy and 99% kappa on the holdout... pretty decent
+
+
+```
+
+The accuracy using the test data was very high (98%). I expected the out of sample
+error to be higher. Generally, I think that in a real-world situation, the accuracy 
+will be lower. Nonetheless, there is potential here for very accurate predictions 
+using these types of data and prediction algorithms.
